@@ -30,9 +30,6 @@ logging.getLogger("pyrogram.session").setLevel(logging.ERROR)
 logging.getLogger("pyrogram.connection").setLevel(logging.ERROR)
 logging.getLogger("pyrogram.dispatcher").setLevel(logging.ERROR)
 
-# Global start time for uptime calculation
-BOT_START_TIME = time.time()
-
 # Initialize aria2
 aria2 = Aria2API(
     Aria2Client(
@@ -51,37 +48,76 @@ options = {
 }
 aria2.set_global_options(options)
 
-# Environment variables with error handling
-def get_env_int(var_name, required=True):
-    value = os.environ.get(var_name, '')
-    if not value and required:
-        logger.error(f"{var_name} variable is missing! Exiting now")
-        exit(1)
-    try:
-        # Remove any surrounding characters
-        return int(value.strip('{}\'" '))
-    except ValueError:
-        logger.error(f"Invalid {var_name} value: {value}. Must be a numeric value.")
-        exit(1)
+# Environment variables
+API_ID = os.environ.get('TELEGRAM_API', '')
+if not API_ID:
+    logger.error("TELEGRAM_API variable is missing! Exiting now")
+    exit(1)
 
-def get_env_str(var_name, required=True, default=''):
-    value = os.environ.get(var_name, default)
-    if not value and required:
-        logger.error(f"{var_name} variable is missing! Exiting now")
-        exit(1)
-    return value.strip('{}\'" ')
+API_HASH = os.environ.get('TELEGRAM_HASH', '')
+if not API_HASH:
+    logger.error("TELEGRAM_HASH variable is missing! Exiting now")
+    exit(1)
+    
+BOT_TOKEN = os.environ.get('BOT_TOKEN', '')
+if not BOT_TOKEN:
+    logger.error("BOT_TOKEN variable is missing! Exiting now")
+    exit(1)
 
-# Get environment variables
-API_ID = get_env_int('TELEGRAM_API')
-API_HASH = get_env_str('TELEGRAM_HASH')
-BOT_TOKEN = get_env_str('BOT_TOKEN')
-DUMP_CHAT_ID = get_env_int('DUMP_CHAT_ID')
-FSUB_ID = get_env_int('FSUB_ID')
-ADMIN = get_env_int('ADMIN')
-LOG_CHANNEL = get_env_int('LOG_CHANNEL')
-DB_URL = get_env_str('DB_URL')
-DB_NAME = get_env_str('DB_NAME', required=False, default='JetMirrorBot')
-USER_SESSION_STRING = get_env_str('USER_SESSION_STRING', required=False)
+DUMP_CHAT_ID = os.environ.get('DUMP_CHAT_ID', '')
+if not DUMP_CHAT_ID:
+    logger.error("DUMP_CHAT_ID variable is missing! Exiting now")
+    exit(1)
+try:
+    DUMP_CHAT_ID = int(DUMP_CHAT_ID.strip('{}'))  # Remove curly braces if present
+except ValueError:
+    logger.error(f"Invalid DUMP_CHAT_ID value: {DUMP_CHAT_ID}. Must be a numeric value.")
+    exit(1)
+    
+USER_SESSION_STRING = os.environ.get('USER_SESSION_STRING', '')
+if not USER_SESSION_STRING:
+    logger.info("USER_SESSION_STRING variable is missing! Bot will split Files in 2Gb...")
+    USER_SESSION_STRING = None
+
+DB_URL = os.environ.get('DB_URL', '')
+if not DB_URL:
+    logger.error("DB_URL variable is missing! Exiting now")
+    exit(1)
+
+DB_NAME = os.environ.get('DB_NAME', 'JetMirrorBot')
+
+# For FSUB_ID
+FSUB_ID = os.environ.get('FSUB_ID', '')
+if not FSUB_ID:
+    logger.error("FSUB_ID variable is missing! Exiting now")
+    exit(1)
+try:
+    FSUB_ID = int(FSUB_ID.strip('{}'))
+except ValueError:
+    logger.error(f"Invalid FSUB_ID value: {FSUB_ID}. Must be a numeric value.")
+    exit(1)
+
+# For ADMIN
+ADMIN = os.environ.get('ADMIN', '')
+if not ADMIN:
+    logger.error("ADMIN variable is missing! Exiting now")
+    exit(1)
+try:
+    ADMIN = int(ADMIN.strip('{}'))
+except ValueError:
+    logger.error(f"Invalid ADMIN value: {ADMIN}. Must be a numeric value.")
+    exit(1)
+
+# For LOG_CHANNEL
+LOG_CHANNEL = os.environ.get('LOG_CHANNEL', '')
+if not LOG_CHANNEL:
+    logger.error("LOG_CHANNEL variable is missing! Exiting now")
+    exit(1)
+try:
+    LOG_CHANNEL = int(LOG_CHANNEL.strip('{}'))
+except ValueError:
+    logger.error(f"Invalid LOG_CHANNEL value: {LOG_CHANNEL}. Must be a numeric value.")
+    exit(1)
 
 # Initialize clients
 app = Client("jetbot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -97,6 +133,7 @@ VALID_DOMAINS = [
     'terabox.app', 'gibibox.com', 'goaibox.com', 'terasharelink.com', 
     'teraboxlink.com', 'terafileshare.com'
 ]
+last_update_time = 0
 
 # Database class
 class Database:
@@ -124,20 +161,18 @@ class Database:
         count = await self.col.count_documents({})
         return count
 
-    def get_all_users(self):
-        return self.col.find({})
+    async def get_all_users(self):
+        all_users = self.col.find({})
+        return all_users
 
     async def delete_user(self, user_id):
         await self.col.delete_many({'_id': int(user_id)})
     
     async def send_user_log(self, b, u):
-        try:
-            await b.send_message(
-                LOG_CHANNEL,
-                f"**--New User Started The Bot--**\n\nUser: {u.mention}\nID: `{u.id}`\nUsername: @{u.username}"
-            )
-        except Exception as e:
-            logger.error(f"Failed to send user log: {e}")
+        await b.send_message(
+            LOG_CHANNEL,
+            f"**--New User Started The Bot--**\n\nUser: {u.mention}\nID: `{u.id}`\nUsername: @{u.username}"
+        )
         
     async def add_chat(self, b, m):
         if not await self.is_chat_exist(m.chat.id):
@@ -153,20 +188,18 @@ class Database:
         count = await self.chat.count_documents({})
         return count
 
-    def get_all_chats(self):
-        return self.chat.find({})
+    async def get_all_chats(self):
+        all_chats = self.chat.find({})
+        return all_chats
 
     async def delete_chat(self, chat_id):
         await self.chat.delete_many({'_id': int(chat_id)})
     
     async def send_chat_log(self, b, m):
-        try:
-            await b.send_message(
-                LOG_CHANNEL,
-                f"**--New Chat Started The Bot--**\n\nChat: {m.chat.title}\nID: `{m.chat.id}`\nUsername: @{m.chat.username}"
-            )
-        except Exception as e:
-            logger.error(f"Failed to send chat log: {e}")
+        await b.send_message(
+            LOG_CHANNEL,
+            f"**--New Chat Started The Bot--**\n\nChat: {m.chat.title}\nID: `{m.chat.id}`\nUsername: @{m.chat.username}"
+        )
 
 # Initialize database
 db = Database(DB_URL, DB_NAME)
@@ -174,29 +207,17 @@ db = Database(DB_URL, DB_NAME)
 # Helper functions
 async def is_user_member(client, user_id):
     try:
-        # Check if bot is in the channel
-        try:
-            await client.get_chat_member(FSUB_ID, "me")
-        except Exception:
-            logger.warning(f"Bot is not in channel {FSUB_ID} or not admin")
-            return True  # Skip check if bot isn't in channel
-            
         member = await client.get_chat_member(FSUB_ID, user_id)
-        return member.status in [
-            ChatMemberStatus.MEMBER, 
-            ChatMemberStatus.ADMINISTRATOR, 
-            ChatMemberStatus.OWNER
-        ]
+        if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
+            return True
+        return False
     except Exception as e:
-        logger.error(f"Error checking membership for {user_id}: {e}")
-        return True  # Default to True if check fails
+        logger.error(f"Error checking membership status for user {user_id}: {e}")
+        return False
     
 def is_valid_url(url):
-    try:
-        parsed_url = urlparse(url)
-        return any(parsed_url.netloc.endswith(domain) for domain in VALID_DOMAINS)
-    except Exception:
-        return False
+    parsed_url = urlparse(url)
+    return any(parsed_url.netloc.endswith(domain) for domain in VALID_DOMAINS)
 
 def format_size(size):
     if size < 1024:
@@ -237,41 +258,24 @@ async def send_msg(user_id, message):
 # Command handlers
 @app.on_message(filters.command("start"))
 async def start_command(client: Client, message: Message):
-    try:
-        await db.add_user(client, message)
-    except Exception as e:
-        logger.error(f"Error adding user to DB: {e}")
+    await db.add_user(client, message)
     
     join_button = InlineKeyboardButton("ᴊᴏɪɴ", url="https://t.me/tellymirror")
     developer_button = InlineKeyboardButton("ᴅᴇᴠᴇʟᴏᴘᴇʀ", url="https://t.me/tellyhubownerbot")
     user_mention = message.from_user.mention
     reply_markup = InlineKeyboardMarkup([[join_button, developer_button]])
     final_msg = f"ᴡᴇʟᴄᴏᴍᴇ, {user_mention}.\n\nɪ ᴀᴍ ᴀ ᴛᴇʀᴀʙᴏx ᴅᴏᴡɴʟᴏᴀᴅᴇʀ ʙᴏᴛ. sᴇɴᴅ ᴍᴇ ᴀɴʏ ᴛᴇʀᴀʙᴏx ʟɪɴᴋ ɪ ᴡɪʟʟ ᴅᴏᴡɴʟᴏᴀᴅ ᴡɪᴛʜɪɴ ғᴇᴡ sᴇᴄᴏɴᴅs ᴀɴᴅ sᴇɴᴅ ɪᴛ ᴛᴏ ʏᴏᴜ ✨."
-    await message.reply_text(final_msg, reply_markup=reply_markup)
-
-@app.on_message(filters.command(["stats", "status"]) & filters.user(ADMIN))
-async def get_stats(bot: Client, message: Message):
-    try:
-        total_users = await db.total_users_count()
-        total_chats = await db.total_chats_count()
-        uptime_seconds = time.time() - BOT_START_TIME
-        uptime = str(timedelta(seconds=int(uptime_seconds)))
-        
-        start_t = time.time()
-        sts = await message.reply('**Processing.....**')    
-        end_t = time.time()
-        time_taken_s = (end_t - start_t) * 1000
-        
-        await sts.edit(
-            text=f"**--Bot Status--**\n\n"
-                 f"**⌚️ Bot Uptime:** `{uptime}`\n"
-                 f"**🐌 Current Ping:** `{time_taken_s:.3f} ms`\n"
-                 f"**👭 Total Users:** `{total_users}`\n"
-                 f"**💬 Total Chats:** `{total_chats}`"
+    video_file_id = "https://ibb.co/m5yY6gDs"
+    if os.path.exists(video_file_id):
+        await client.send_video(
+            chat_id=message.chat.id,
+            video=video_file_id,
+            caption=final_msg,
+            reply_markup=reply_markup
         )
-    except Exception as e:
-        logger.error(f"Error in stats command: {e}")
-        await message.reply("❌ Error getting stats. Check logs.")
+    else:
+        await message.reply_text(final_msg, reply_markup=reply_markup)
+
 
 @app.on_message(filters.private & filters.command("restart") & filters.user(ADMIN))
 async def restart_bot(b, m):
@@ -282,50 +286,52 @@ async def restart_bot(b, m):
     blocked = 0
     start_time = time.time()
     total_users = await db.total_users_count()
-    all_users = db.get_all_users()
-    
-    async for user_doc in all_users:
+    all_users = await db.get_all_users()
+    async for user in all_users:
         try:
-            user_id = user_doc['_id']
-            try:
-                user_obj = await b.get_users(user_id)
-                mention = user_obj.mention
-            except:
-                mention = f"user:{user_id}"
-                
-            restart_msg = f"Hey {mention},\n\n**🔄 Processes stopped. Bot is restarting.....\n\n✅️ Bot is restarted. Now you can use me.**"
-            await b.send_message(user_id, restart_msg)
+            restart_msg = f"Hey, {(await b.get_users(user['_id'])).mention}\n\n**🔄 Processes stopped. Bot is restarting.....\n\n✅️ Bot is restarted. Now you can use me.**"
+            await b.send_message(user['_id'], restart_msg)
             success += 1
         except InputUserDeactivated:
             deactivated += 1
-            await db.delete_user(user_id)
+            await db.delete_user(user['_id'])
         except UserIsBlocked:
             blocked += 1
-            await db.delete_user(user_id)
+            await db.delete_user(user['_id'])
         except Exception as e:
             failed += 1
-            logger.error(f"Error sending restart to {user_id}: {e}")
-        finally:
-            if (success + failed + deactivated + blocked) % 10 == 0:
-                await sts.edit(
-                    f"<u>Restart in progress:</u>\n\n"
-                    f"• Total users: {total_users}\n"
-                    f"• Successful: {success}\n"
-                    f"• Blocked users: {blocked}\n"
-                    f"• Deleted accounts: {deactivated}\n"
-                    f"• Unsuccessful: {failed}"
-                )
-    
+            await db.delete_user(user['_id'])
+            logger.error(f"Error sending restart message: {e}")
+        try:
+            await sts.edit(f"<u>Restart in progress:</u>\n\n• Total users: {total_users}\n• Successful: {success}\n• Blocked users: {blocked}\n• Deleted accounts: {deactivated}\n• Unsuccessful: {failed}")
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
     completed_restart = timedelta(seconds=int(time.time() - start_time))
-    await sts.edit(
-        f"✅ Completed restart in `{completed_restart}`\n\n"
-        f"• Total users: {total_users}\n"
-        f"• Successful: {success}\n"
-        f"• Blocked users: {blocked}\n"
-        f"• Deleted accounts: {deactivated}\n"
-        f"• Unsuccessful: {failed}"
-    )
+    await sts.edit(f"Completed restart: {completed_restart}\n\n• Total users: {total_users}\n• Successful: {success}\n• Blocked users: {blocked}\n• Deleted accounts: {deactivated}\n• Unsuccessful: {failed}")
     os.execl(sys.executable, sys.executable, *sys.argv)
+
+
+# Update the command filters to use the correct syntax
+@app.on_message(filters.command(["stats", "status"]) & filters.user(ADMIN))
+async def get_stats(bot: Client, message: Message):
+    try:
+        total_users = await db.total_users_count()
+        total_chats = await db.total_chats_count()
+        uptime = time.strftime("%Hh%Mm%Ss", time.gmtime(time.time() - bot.uptime))    
+        start_t = time.time()
+        sts = await message.reply('**Processing.....**')    
+        end_t = time.time()
+        time_taken_s = (end_t - start_t) * 1000
+        await sts.edit(
+            text=f"**--Bot Status--**\n\n"
+                 f"**⌚️ Bot Uptime:** {uptime}\n"
+                 f"**🐌 Current Ping:** `{time_taken_s:.3f} ms`\n"
+                 f"**👭 Total Users:** `{total_users}`\n"
+                 f"**💬 Total Chats:** `{total_chats}`"
+        )
+    except Exception as e:
+        logger.error(f"Error in stats command: {e}")
+        await message.reply("❌ Error getting stats. Check logs.")
 
 @app.on_message(filters.command("broadcast") & filters.user(ADMIN) & filters.reply)
 async def broadcast_handler(bot: Client, message: Message):
@@ -337,10 +343,10 @@ async def broadcast_handler(bot: Client, message: Message):
         
         broadcast_msg = message.reply_to_message
         if not broadcast_msg:
-            await message.reply("❌ Please reply to a message to broadcast")
+            await message.reply("Please reply to a message to broadcast")
             return
             
-        sts_msg = await message.reply("📢 Broadcast Started...") 
+        sts_msg = await message.reply("Broadcast Started..!") 
         done = 0
         failed = 0
         success = 0
@@ -349,10 +355,9 @@ async def broadcast_handler(bot: Client, message: Message):
         total_users = await db.total_users_count()
         all_users = db.get_all_users()
         
-        async for user_doc in all_users:
-            user_id = user_doc['_id']
+        async for user in all_users:
             try:
-                sts = await send_msg(user_id, broadcast_msg)
+                sts = await send_msg(user['_id'], broadcast_msg)
                 if sts == 200:
                     success += 1
                 else:
@@ -361,38 +366,39 @@ async def broadcast_handler(bot: Client, message: Message):
                 
                 if done % 20 == 0:
                     await sts_msg.edit(
-                        f"📊 Broadcast Progress:\n"
-                        f"• Total Users: `{total_users}`\n"
-                        f"• Completed: `{done}/{total_users}`\n"
-                        f"• Success: `{success}`\n"
-                        f"• Failed: `{failed}`"
+                        f"Broadcast Progress:\n"
+                        f"Total Users: {total_users}\n"
+                        f"Completed: {done}/{total_users}\n"
+                        f"Success: {success}\n"
+                        f"Failed: {failed}"
                     )
             except Exception as e:
-                logger.error(f"Error broadcasting to {user_id}: {e}")
+                logger.error(f"Error broadcasting to {user['_id']}: {e}")
                 failed += 1
+                continue
                 
         completed_in = timedelta(seconds=int(time.time() - start_time))
         await sts_msg.edit(
-            f"✅ Broadcast Completed in `{completed_in}`\n\n"
-            f"• Total Users: `{total_users}`\n"
-            f"• Success: `{success}`\n"
-            f"• Failed: `{failed}`"
+            f"Broadcast Completed in {completed_in}\n\n"
+            f"Total Users: {total_users}\n"
+            f"Success: {success}\n"
+            f"Failed: {failed}"
         )
     except Exception as e:
         logger.error(f"Broadcast error: {e}")
-        await message.reply(f"❌ Broadcast failed: {str(e)[:200]}")
+        await message.reply(f"❌ Broadcast failed: {e}")
 
-@app.on_message(filters.text & ~filters.command(["start", "stats", "status", "broadcast", "restart"]))
+
+
+@app.on_message(filters.text)
 async def handle_message(client: Client, message: Message):
+    if message.text.startswith('/'):
+        return
     if not message.from_user:
         return
 
     user_id = message.from_user.id
-    try:
-        is_member = await is_user_member(client, user_id)
-    except Exception as e:
-        logger.error(f"Membership check error: {e}")
-        is_member = True  # Default to True on error
+    is_member = await is_user_member(client, user_id)
 
     if not is_member:
         join_button = InlineKeyboardButton("ᴊᴏɪɴ ❤️🚀", url="https://t.me/tellymirror")
@@ -407,63 +413,43 @@ async def handle_message(client: Client, message: Message):
             break
 
     if not url:
-        await message.reply_text("❌ Please provide a valid Terabox link.")
+        await message.reply_text("Please provide a valid Terabox link.")
         return
 
-    try:
-        encoded_url = urllib.parse.quote(url)
-        final_url = f"https://teraboxbotredirect.tellycloudapi.workers.dev/?url={encoded_url}"
-    except Exception as e:
-        logger.error(f"URL encoding error: {e}")
-        await message.reply_text("❌ Invalid URL format")
-        return
+    encoded_url = urllib.parse.quote(url)
+    final_url = f"https://teraboxbotredirect.tellycloudapi.workers.dev/?url={encoded_url}"
 
-    try:
-        download = aria2.add_uris([final_url])
-        status_message = await message.reply_text("⏳ Processing your request...")
-    except Exception as e:
-        logger.error(f"Aria2 add_uris error: {e}")
-        await message.reply_text("❌ Failed to start download")
-        return
+    download = aria2.add_uris([final_url])
+    status_message = await message.reply_text("sᴇɴᴅɪɴɢ ʏᴏᴜ ᴛʜᴇ ᴍᴇᴅɪᴀ...🤤")
 
     start_time = datetime.now()
 
     while not download.is_complete:
-        try:
-            await asyncio.sleep(15)
-            download.update()
-            progress = download.progress
+        await asyncio.sleep(15)
+        download.update()
+        progress = download.progress
 
-            elapsed_time = datetime.now() - start_time
-            elapsed_minutes, elapsed_seconds = divmod(elapsed_time.seconds, 60)
+        elapsed_time = datetime.now() - start_time
+        elapsed_minutes, elapsed_seconds = divmod(elapsed_time.seconds, 60)
 
-            status_text = (
-                f"📥 **Downloading:** `{download.name}`\n"
-                f"📊 **Progress:** `{progress:.2f}%`\n"
-                f"🔽 **Downloaded:** `{format_size(download.completed_length)}` / `{format_size(download.total_length)}`\n"
-                f"🚀 **Speed:** `{format_size(download.download_speed)}/s`\n"
-                f"⏱️ **Elapsed:** `{elapsed_minutes}m {elapsed_seconds}s`\n"
-                f"⏳ **ETA:** `{download.eta}`"
-            )
-            await update_status_message(status_message, status_text)
-        except FloodWait as e:
-            logger.warning(f"Flood wait: Sleeping for {e.value}s")
-            await asyncio.sleep(e.value)
-        except Exception as e:
-            logger.error(f"Download status error: {e}")
-            break
+        status_text = (
+            f"ғɪʟᴇɴᴀᴍᴇ: {download.name}\n"
+            f"[{'▣' * int(progress / 10)}{'▢' * (10 - int(progress / 10))}] {progress:.2f}%\n"
+            f"ᴘʀᴏᴄᴇssᴇᴅ: {format_size(download.completed_length)} ᴏғ {format_size(download.total_length)}\n"
+            f"sᴛᴀᴛᴜs: 📥 Downloading\n"
+            f"sᴘᴇᴇᴅ: {format_size(download.download_speed)}/s\n"
+            f"ᴇᴛᴀ: {download.eta} | ᴇʟᴀᴘsᴇᴅ: {elapsed_minutes}m {elapsed_seconds}s\n"
+        )
+        while True:
+            try:
+                await update_status_message(status_message, status_text)
+                break
+            except FloodWait as e:
+                logger.error(f"Flood wait detected! Sleeping for {e.value} seconds")
+                await asyncio.sleep(e.value)
 
-    if not download.is_complete:
-        await status_message.edit_text("❌ Download failed or timed out")
-        return
-
-    try:
-        file_path = download.files[0].path
-        caption = f"✨ **{download.name}**"
-    except Exception as e:
-        logger.error(f"File path error: {e}")
-        await status_message.edit_text("❌ Error getting file path")
-        return
+    file_path = download.files[0].path
+    caption = f"✨ {download.name}"
 
     last_update_time = time.time()
     UPDATE_INTERVAL = 15
@@ -478,21 +464,22 @@ async def handle_message(client: Client, message: Message):
             except FloodWait as e:
                 logger.warning(f"FloodWait: Sleeping for {e.value}s")
                 await asyncio.sleep(e.value)
+                await update_status(message, text)
             except Exception as e:
-                logger.error(f"Status update error: {e}")
+                logger.error(f"Error updating status: {e}")
 
     async def upload_progress(current, total):
         progress = (current / total) * 100
         elapsed_time = datetime.now() - start_time
         elapsed_minutes, elapsed_seconds = divmod(elapsed_time.seconds, 60)
-        speed = current / elapsed_time.total_seconds() if elapsed_time.total_seconds() > 0 else 0
 
         status_text = (
-            f"📤 **Uploading:** `{download.name}`\n"
-            f"📊 **Progress:** `{progress:.2f}%`\n"
-            f"🔼 **Uploaded:** `{format_size(current)}` / `{format_size(total)}`\n"
-            f"🚀 **Speed:** `{format_size(speed)}/s`\n"
-            f"⏱️ **Elapsed:** `{elapsed_minutes}m {elapsed_seconds}s`"
+            f"ғɪʟᴇɴᴀᴍᴇ: {download.name}\n"
+            f"[{'▣' * int(progress / 10)}{'▢' * (10 - int(progress / 10))}] {progress:.2f}%\n"
+            f"ᴘʀᴏᴄᴇssᴇᴅ: {format_size(current)} ᴏғ {format_size(total)}\n"
+            f"sᴛᴀᴛᴜs: 📤 Uploading to Telegram\n"
+            f"sᴘᴇᴇᴅ: {format_size(current / elapsed_time.seconds if elapsed_time.seconds > 0 else 0)}/s\n"
+            f"ᴇʟᴀᴘsᴇᴅ: {elapsed_minutes}m {elapsed_seconds}s\n"
         )
         await update_status(status_message, status_text)
 
@@ -500,19 +487,15 @@ async def handle_message(client: Client, message: Message):
         try:
             original_ext = os.path.splitext(input_path)[1].lower() or '.mp4'
             start_time = datetime.now()
+            last_progress_update = time.time()
             
-            # Get video duration
             proc = await asyncio.create_subprocess_exec(
                 'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
                 '-of', 'default=noprint_wrappers=1:nokey=1', input_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await proc.communicate()
-            if stderr:
-                logger.error(f"FFprobe error: {stderr.decode()}")
-                return [input_path]
-                
+            stdout, _ = await proc.communicate()
             total_duration = float(stdout.decode().strip())
             
             file_size = os.path.getsize(input_path)
@@ -525,14 +508,22 @@ async def handle_message(client: Client, message: Message):
             split_files = []
             
             for i in range(parts):
-                output_path = f"{output_prefix}.part{i+1:03d}{original_ext}"
+                current_time = time.time()
+                if current_time - last_progress_update >= UPDATE_INTERVAL:
+                    elapsed = datetime.now() - start_time
+                    status_text = (
+                        f"✂️ Splitting {os.path.basename(input_path)}\n"
+                        f"Part {i+1}/{parts}\n"
+                        f"Elapsed: {elapsed.seconds // 60}m {elapsed.seconds % 60}s"
+                    )
+                    await update_status(status_message, status_text)
+                    last_progress_update = current_time
+                
+                output_path = f"{output_prefix}.{i+1:03d}{original_ext}"
                 cmd = [
-                    'ffmpeg', '-y', 
-                    '-ss', str(i * duration_per_part),
-                    '-i', input_path, 
-                    '-t', str(duration_per_part),
-                    '-c', 'copy', 
-                    '-map', '0',
+                    'ffmpeg', '-y', '-ss', str(i * duration_per_part),
+                    '-i', input_path, '-t', str(duration_per_part),
+                    '-c', 'copy', '-map', '0',
                     '-avoid_negative_ts', 'make_zero',
                     output_path
                 ]
@@ -540,132 +531,104 @@ async def handle_message(client: Client, message: Message):
                 proc = await asyncio.create_subprocess_exec(*cmd)
                 await proc.wait()
                 split_files.append(output_path)
-                
-                # Update status every part
-                await update_status(
-                    status_message,
-                    f"✂️ **Splitting:** `{download.name}`\n"
-                    f"📦 **Part:** `{i+1}/{parts}`"
-                )
             
             return split_files
         except Exception as e:
             logger.error(f"Split error: {e}")
-            return [input_path]
+            raise
 
     async def handle_upload():
-        try:
-            file_size = os.path.getsize(file_path)
+        file_size = os.path.getsize(file_path)
+        
+        if file_size > SPLIT_SIZE:
+            await update_status(
+                status_message,
+                f"✂️ Splitting {download.name} ({format_size(file_size)})"
+            )
             
-            if file_size > SPLIT_SIZE:
-                await update_status(
-                    status_message,
-                    f"✂️ **Splitting:** `{download.name}`\n"
-                    f"📏 **Size:** `{format_size(file_size)}`"
-                )
-                
-                split_files = await split_video_with_ffmpeg(
-                    file_path,
-                    os.path.splitext(file_path)[0],
-                    SPLIT_SIZE
-                )
-                
-                try:
-                    for i, part in enumerate(split_files):
-                        part_caption = f"{caption}\n\nPart {i+1}/{len(split_files)}"
-                        await update_status(
-                            status_message,
-                            f"📤 **Uploading Part:** `{i+1}/{len(split_files)}`\n"
-                            f"📝 **File:** `{os.path.basename(part)}`"
-                        )
-                        
-                        if USER_SESSION_STRING and user:
-                            sent = await user.send_video(
-                                DUMP_CHAT_ID, 
-                                video=part, 
-                                caption=part_caption,
-                                progress=upload_progress
-                            )
-                            await app.copy_message(
-                                message.chat.id, 
-                                DUMP_CHAT_ID, 
-                                sent.id
-                            )
-                        else:
-                            sent = await client.send_video(
-                                DUMP_CHAT_ID, 
-                                video=part,
-                                caption=part_caption,
-                                progress=upload_progress
-                            )
-                            await client.send_video(
-                                message.chat.id, 
-                                sent.video.file_id,
-                                caption=part_caption
-                            )
-                        try:
-                            os.remove(part)
-                        except:
-                            pass
-                finally:
-                    for part in split_files:
-                        try: 
-                            os.remove(part)
-                        except: 
-                            pass
-            else:
-                await update_status(
-                    status_message,
-                    f"📤 **Uploading:** `{download.name}`\n"
-                    f"📏 **Size:** `{format_size(file_size)}`"
-                )
-                
-                if USER_SESSION_STRING and user:
-                    sent = await user.send_video(
-                        DUMP_CHAT_ID, 
-                        video=file_path,
-                        caption=caption,
-                        progress=upload_progress
-                    )
-                    await app.copy_message(
-                        message.chat.id, 
-                        DUMP_CHAT_ID, 
-                        sent.id
-                    )
-                else:
-                    sent = await client.send_video(
-                        DUMP_CHAT_ID, 
-                        video=file_path,
-                        caption=caption,
-                        progress=upload_progress
-                    )
-                    await client.send_video(
-                        message.chat.id, 
-                        sent.video.file_id,
-                        caption=caption
-                    )
-        except Exception as e:
-            logger.error(f"Upload error: {e}")
-            await status_message.edit_text(f"❌ Upload failed: {str(e)[:200]}")
-        finally:
+            split_files = await split_video_with_ffmpeg(
+                file_path,
+                os.path.splitext(file_path)[0],
+                SPLIT_SIZE
+            )
+            
             try:
-                os.remove(file_path)
-            except:
-                pass
+                for i, part in enumerate(split_files):
+                    part_caption = f"{caption}\n\nPart {i+1}/{len(split_files)}"
+                    await update_status(
+                        status_message,
+                        f"📤 Uploading part {i+1}/{len(split_files)}\n"
+                        f"{os.path.basename(part)}"
+                    )
+                    
+                    if USER_SESSION_STRING:
+                        sent = await user.send_video(
+                            DUMP_CHAT_ID, part, 
+                            caption=part_caption,
+                            progress=upload_progress
+                        )
+                        await app.copy_message(
+                            message.chat.id, DUMP_CHAT_ID, sent.id
+                        )
+                    else:
+                        sent = await client.send_video(
+                            DUMP_CHAT_ID, part,
+                            caption=part_caption,
+                            progress=upload_progress
+                        )
+                        await client.send_video(
+                            message.chat.id, sent.video.file_id,
+                            caption=part_caption
+                        )
+                    os.remove(part)
+            finally:
+                for part in split_files:
+                    try: os.remove(part)
+                    except: pass
+        else:
+            await update_status(
+                status_message,
+                f"📤 Uploading {download.name}\n"
+                f"Size: {format_size(file_size)}"
+            )
+            
+            if USER_SESSION_STRING:
+                sent = await user.send_video(
+                    DUMP_CHAT_ID, file_path,
+                    caption=caption,
+                    progress=upload_progress
+                )
+                await app.copy_message(
+                    message.chat.id, DUMP_CHAT_ID, sent.id
+                )
+            else:
+                sent = await client.send_video(
+                    DUMP_CHAT_ID, file_path,
+                    caption=caption,
+                    progress=upload_progress
+                )
+                await client.send_video(
+                    message.chat.id, sent.video.file_id,
+                    caption=caption
+                )
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
+    start_time = datetime.now()
     await handle_upload()
+
     try:
         await status_message.delete()
         await message.delete()
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Cleanup error: {e}")
 
 # Flask server for keeping the bot alive
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
 def home():
-    return "Bot is running!"
+    return render_template("index.html")
 
 def run_flask():
     flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
@@ -673,39 +636,22 @@ def run_flask():
 def keep_alive():
     Thread(target=run_flask).start()
 
-async def start_clients():
-    logger.info("Starting bot client...")
-    await app.start()
-    
+async def start_user_client():
     if user:
-        logger.info("Starting user client...")
         await user.start()
-    
-    # Set bot commands
-    await app.set_bot_commands([
-        ("start", "Start the bot"),
-        ("stats", "Get bot statistics (admin)"),
-        ("broadcast", "Broadcast message (admin)"),
-        ("restart", "Restart bot (admin)")
-    ])
-    
-    me = await app.get_me()
-    logger.info(f"Bot started as @{me.username}")
+        logger.info("User client started.")
 
-async def run_bot():
-    await start_clients()
-    await idle()
+def run_user():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(start_user_client())
 
 if __name__ == "__main__":
     keep_alive()
-    
-    loop = asyncio.get_event_loop()
-    try:
-        loop.run_until_complete(run_bot())
-    except KeyboardInterrupt:
-        pass
-    finally:
-        loop.run_until_complete(app.stop())
-        if user:
-            loop.run_until_complete(user.stop())
-        loop.close()
+
+    if user:
+        logger.info("Starting user client...")
+        Thread(target=run_user).start()
+
+    logger.info("Starting bot client...")
+    app.run()
