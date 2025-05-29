@@ -1,9 +1,10 @@
 uvloop
 requests
-aria2p
 git+https://github.com/Hrishi2861/pyrofork-2.2.11-peer-fix.git
-python-dotenv
 pytz
 tgcrypto
 flask
-motor
+pyrogram>=2.0.0
+motor>=3.0.0
+aria2p>=0.10.0
+python-dotenv>=0.19.0
