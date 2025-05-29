@@ -68,27 +68,16 @@ DUMP_CHAT_ID = os.environ.get('DUMP_CHAT_ID', '')
 if not DUMP_CHAT_ID:
     logger.error("DUMP_CHAT_ID variable is missing! Exiting now")
     exit(1)
-else:
-    DUMP_CHAT_ID = int(DUMP_CHAT_ID)
-
-FSUB_ID = os.environ.get('FSUB_ID', '')
-if not FSUB_ID:
-    logger.error("FSUB_ID variable is missing! Exiting now")
+try:
+    DUMP_CHAT_ID = int(DUMP_CHAT_ID.strip('{}'))  # Remove curly braces if present
+except ValueError:
+    logger.error(f"Invalid DUMP_CHAT_ID value: {DUMP_CHAT_ID}. Must be a numeric value.")
     exit(1)
-else:
-    FSUB_ID = int(FSUB_ID)
-
+    
 USER_SESSION_STRING = os.environ.get('USER_SESSION_STRING', '')
 if not USER_SESSION_STRING:
     logger.info("USER_SESSION_STRING variable is missing! Bot will split Files in 2Gb...")
     USER_SESSION_STRING = None
-
-ADMIN = os.environ.get('ADMIN', '')
-if not ADMIN:
-    logger.error("ADMIN variable is missing! Exiting now")
-    exit(1)
-else:
-    ADMIN = int(ADMIN)
 
 DB_URL = os.environ.get('DB_URL', '')
 if not DB_URL:
@@ -97,12 +86,38 @@ if not DB_URL:
 
 DB_NAME = os.environ.get('DB_NAME', 'JetMirrorBot')
 
+# For FSUB_ID
+FSUB_ID = os.environ.get('FSUB_ID', '')
+if not FSUB_ID:
+    logger.error("FSUB_ID variable is missing! Exiting now")
+    exit(1)
+try:
+    FSUB_ID = int(FSUB_ID.strip('{}'))
+except ValueError:
+    logger.error(f"Invalid FSUB_ID value: {FSUB_ID}. Must be a numeric value.")
+    exit(1)
+
+# For ADMIN
+ADMIN = os.environ.get('ADMIN', '')
+if not ADMIN:
+    logger.error("ADMIN variable is missing! Exiting now")
+    exit(1)
+try:
+    ADMIN = int(ADMIN.strip('{}'))
+except ValueError:
+    logger.error(f"Invalid ADMIN value: {ADMIN}. Must be a numeric value.")
+    exit(1)
+
+# For LOG_CHANNEL
 LOG_CHANNEL = os.environ.get('LOG_CHANNEL', '')
 if not LOG_CHANNEL:
     logger.error("LOG_CHANNEL variable is missing! Exiting now")
     exit(1)
-else:
-    LOG_CHANNEL = int(LOG_CHANNEL)
+try:
+    LOG_CHANNEL = int(LOG_CHANNEL.strip('{}'))
+except ValueError:
+    logger.error(f"Invalid LOG_CHANNEL value: {LOG_CHANNEL}. Must be a numeric value.")
+    exit(1)
 
 # Initialize clients
 app = Client("jetbot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
