@@ -207,13 +207,22 @@ db = Database(DB_URL, DB_NAME)
 # Helper functions
 async def is_user_member(client, user_id):
     try:
+        # First ensure bot is in the channel
+        try:
+            await client.get_chat(FSUB_ID)
+        except Exception:
+            logger.error(f"Bot is not in channel {FSUB_ID}")
+            return True  # Skip check if bot isn't in channel
+            
         member = await client.get_chat_member(FSUB_ID, user_id)
-        if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
-            return True
-        return False
+        return member.status in [
+            ChatMemberStatus.MEMBER, 
+            ChatMemberStatus.ADMINISTRATOR, 
+            ChatMemberStatus.OWNER
+        ]
     except Exception as e:
-        logger.error(f"Error checking membership status for user {user_id}: {e}")
-        return False
+        logger.error(f"Error checking membership for {user_id}: {e}")
+        return True  # Default to True if check fails
     
 def is_valid_url(url):
     parsed_url = urlparse(url)
@@ -311,17 +320,23 @@ async def restart_bot(b, m):
     os.execl(sys.executable, sys.executable, *sys.argv)
 
 
-# Update the command filters to use the correct syntax
+# Add this with your other global variables
+BOT_START_TIME = time.time()
+
+# Then modify your stats command:
 @app.on_message(filters.command(["stats", "status"]) & filters.user(ADMIN))
 async def get_stats(bot: Client, message: Message):
     try:
         total_users = await db.total_users_count()
         total_chats = await db.total_chats_count()
-        uptime = time.strftime("%Hh%Mm%Ss", time.gmtime(time.time() - bot.uptime))    
+        uptime_seconds = time.time() - BOT_START_TIME
+        uptime = str(timedelta(seconds=uptime_seconds)).split(".")[0]  # Format as HH:MM:SS
+        
         start_t = time.time()
         sts = await message.reply('**Processing.....**')    
         end_t = time.time()
         time_taken_s = (end_t - start_t) * 1000
+        
         await sts.edit(
             text=f"**--Bot Status--**\n\n"
                  f"**⌚️ Bot Uptime:** {uptime}\n"
