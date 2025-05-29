@@ -1,32 +1,36 @@
 from aria2p import API as Aria2API, Client as Aria2Client
 import asyncio
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import logging
 import math
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram.enums import ChatMemberStatus
-from pyrogram.errors import FloodWait
+from pyrogram.errors import FloodWait, InputUserDeactivated, UserIsBlocked, PeerIdInvalid
 import time
 import urllib.parse
 from urllib.parse import urlparse
 from flask import Flask, render_template
 from threading import Thread
+import motor.motor_asyncio
+import sys
 
+# Load environment variables
 load_dotenv('config.env', override=True)
+
+# Configure logging
 logging.basicConfig(
-    level=logging.INFO,  
+    level=logging.INFO,
     format="[%(asctime)s - %(name)s - %(levelname)s] %(message)s - %(filename)s:%(lineno)d"
 )
-
 logger = logging.getLogger(__name__)
-
 logging.getLogger("pyrogram.session").setLevel(logging.ERROR)
 logging.getLogger("pyrogram.connection").setLevel(logging.ERROR)
 logging.getLogger("pyrogram.dispatcher").setLevel(logging.ERROR)
 
+# Initialize aria2
 aria2 = Aria2API(
     Aria2Client(
         host="http://localhost",
@@ -42,50 +46,71 @@ options = {
     "min-split-size": "4M",
     "split": "10"
 }
-
 aria2.set_global_options(options)
 
+# Environment variables
 API_ID = os.environ.get('TELEGRAM_API', '')
-if len(API_ID) == 0:
-    logging.error("TELEGRAM_API variable is missing! Exiting now")
+if not API_ID:
+    logger.error("TELEGRAM_API variable is missing! Exiting now")
     exit(1)
 
 API_HASH = os.environ.get('TELEGRAM_HASH', '')
-if len(API_HASH) == 0:
-    logging.error("TELEGRAM_HASH variable is missing! Exiting now")
+if not API_HASH:
+    logger.error("TELEGRAM_HASH variable is missing! Exiting now")
     exit(1)
     
 BOT_TOKEN = os.environ.get('BOT_TOKEN', '')
-if len(BOT_TOKEN) == 0:
-    logging.error("BOT_TOKEN variable is missing! Exiting now")
+if not BOT_TOKEN:
+    logger.error("BOT_TOKEN variable is missing! Exiting now")
     exit(1)
 
 DUMP_CHAT_ID = os.environ.get('DUMP_CHAT_ID', '')
-if len(DUMP_CHAT_ID) == 0:
-    logging.error("DUMP_CHAT_ID variable is missing! Exiting now")
+if not DUMP_CHAT_ID:
+    logger.error("DUMP_CHAT_ID variable is missing! Exiting now")
     exit(1)
 else:
     DUMP_CHAT_ID = int(DUMP_CHAT_ID)
 
 FSUB_ID = os.environ.get('FSUB_ID', '')
-if len(FSUB_ID) == 0:
-    logging.error("FSUB_ID variable is missing! Exiting now")
+if not FSUB_ID:
+    logger.error("FSUB_ID variable is missing! Exiting now")
     exit(1)
 else:
     FSUB_ID = int(FSUB_ID)
 
 USER_SESSION_STRING = os.environ.get('USER_SESSION_STRING', '')
-if len(USER_SESSION_STRING) == 0:
-    logging.info("USER_SESSION_STRING variable is missing! Bot will split Files in 2Gb...")
+if not USER_SESSION_STRING:
+    logger.info("USER_SESSION_STRING variable is missing! Bot will split Files in 2Gb...")
     USER_SESSION_STRING = None
 
-app = Client("jetbot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+ADMIN = os.environ.get('ADMIN', '')
+if not ADMIN:
+    logger.error("ADMIN variable is missing! Exiting now")
+    exit(1)
+else:
+    ADMIN = int(ADMIN)
 
+DB_URL = os.environ.get('DB_URL', '')
+if not DB_URL:
+    logger.error("DB_URL variable is missing! Exiting now")
+    exit(1)
+
+DB_NAME = os.environ.get('DB_NAME', 'JetMirrorBot')
+
+LOG_CHANNEL = os.environ.get('LOG_CHANNEL', '')
+if not LOG_CHANNEL:
+    logger.error("LOG_CHANNEL variable is missing! Exiting now")
+    exit(1)
+else:
+    LOG_CHANNEL = int(LOG_CHANNEL)
+
+# Initialize clients
+app = Client("jetbot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 user = None
-SPLIT_SIZE = 2093796556
+SPLIT_SIZE = 2093796556  # 2GB
 if USER_SESSION_STRING:
     user = Client("jetu", api_id=API_ID, api_hash=API_HASH, session_string=USER_SESSION_STRING)
-    SPLIT_SIZE = 4241280205
+    SPLIT_SIZE = 4241280205  # 4GB
 
 VALID_DOMAINS = [
     'terabox.com', 'nephobox.com', '4funbox.com', 'mirrobox.com', 
@@ -95,15 +120,84 @@ VALID_DOMAINS = [
 ]
 last_update_time = 0
 
+# Database class
+class Database:
+    def __init__(self, uri, database_name):
+        self._client = motor.motor_asyncio.AsyncIOMotorClient(uri)
+        self.db = self._client[database_name]
+        self.col = self.db.users
+        self.chat = self.db.chats
+        
+    def new_user(self, id):
+        return dict(_id=int(id))
+            
+    async def add_user(self, b, m):
+        u = m.from_user
+        if not await self.is_user_exist(u.id):
+            user = self.new_user(u.id)
+            await self.col.insert_one(user)            
+            await self.send_user_log(b, u)
+
+    async def is_user_exist(self, id):
+        user = await self.col.find_one({'_id': int(id)})
+        return bool(user)
+
+    async def total_users_count(self):
+        count = await self.col.count_documents({})
+        return count
+
+    async def get_all_users(self):
+        all_users = self.col.find({})
+        return all_users
+
+    async def delete_user(self, user_id):
+        await self.col.delete_many({'_id': int(user_id)})
+    
+    async def send_user_log(self, b, u):
+        await b.send_message(
+            LOG_CHANNEL,
+            f"**--New User Started The Bot--**\n\nUser: {u.mention}\nID: `{u.id}`\nUsername: @{u.username}"
+        )
+        
+    async def add_chat(self, b, m):
+        if not await self.is_chat_exist(m.chat.id):
+            chat = self.new_user(m.chat.id)
+            await self.chat.insert_one(chat)            
+            await self.send_chat_log(b, m)
+
+    async def is_chat_exist(self, id):
+        chat = await self.chat.find_one({'_id': int(id)})
+        return bool(chat)
+
+    async def total_chats_count(self):
+        count = await self.chat.count_documents({})
+        return count
+
+    async def get_all_chats(self):
+        all_chats = self.chat.find({})
+        return all_chats
+
+    async def delete_chat(self, chat_id):
+        await self.chat.delete_many({'_id': int(chat_id)})
+    
+    async def send_chat_log(self, b, m):
+        await b.send_message(
+            LOG_CHANNEL,
+            f"**--New Chat Started The Bot--**\n\nChat: {m.chat.title}\nID: `{m.chat.id}`\nUsername: @{m.chat.username}"
+        )
+
+# Initialize database
+db = Database(DB_URL, DB_NAME)
+
+# Helper functions
 async def is_user_member(client, user_id):
     try:
         member = await client.get_chat_member(FSUB_ID, user_id)
         if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
             return True
-        else:
-            return False
+        return False
     except Exception as e:
-        logging.error(f"Error checking membership status for user {user_id}: {e}")
+        logger.error(f"Error checking membership status for user {user_id}: {e}")
         return False
     
 def is_valid_url(url):
@@ -120,30 +214,121 @@ def format_size(size):
     else:
         return f"{size / (1024 * 1024 * 1024):.2f} GB"
 
+async def update_status_message(status_message, text):
+    try:
+        await status_message.edit_text(text)
+    except Exception as e:
+        logger.error(f"Failed to update status message: {e}")
+
+async def send_msg(user_id, message):
+    try:
+        await message.copy(chat_id=int(user_id))
+        return 200
+    except FloodWait as e:
+        await asyncio.sleep(e.value)
+        return await send_msg(user_id, message)
+    except InputUserDeactivated:
+        logger.info(f"{user_id} : Deactivated")
+        return 400
+    except UserIsBlocked:
+        logger.info(f"{user_id} : Blocked The Bot")
+        return 400
+    except PeerIdInvalid:
+        logger.info(f"{user_id} : User Id Invalid")
+        return 400
+    except Exception as e:
+        logger.error(f"{user_id} : {e}")
+        return 500
+
+# Command handlers
 @app.on_message(filters.command("start"))
 async def start_command(client: Client, message: Message):
-    join_button = InlineKeyboardButton("ᴊᴏɪɴ ❤️🚀", url="https://t.me/jetmirror")
-    developer_button = InlineKeyboardButton("ᴅᴇᴠᴇʟᴏᴘᴇʀ ⚡️", url="https://t.me/rtx5069")
-    repo69 = InlineKeyboardButton("ʀᴇᴘᴏ 🌐", url="https://github.com/Hrishi2861/Terabox-Downloader-Bot")
+    await db.add_user(client, message)
+    
+    join_button = InlineKeyboardButton("ᴊᴏɪɴ", url="https://t.me/tellymirror")
+    developer_button = InlineKeyboardButton("ᴅᴇᴠᴇʟᴏᴘᴇʀ", url="https://t.me/tellyhubownerbot")
     user_mention = message.from_user.mention
-    reply_markup = InlineKeyboardMarkup([[join_button, developer_button], [repo69]])
-    final_msg = f"ᴡᴇʟᴄᴏᴍᴇ, {user_mention}.\n\n🌟 ɪ ᴀᴍ ᴀ ᴛᴇʀᴀʙᴏx ᴅᴏᴡɴʟᴏᴀᴅᴇʀ ʙᴏᴛ. sᴇɴᴅ ᴍᴇ ᴀɴʏ ᴛᴇʀᴀʙᴏx ʟɪɴᴋ ɪ ᴡɪʟʟ ᴅᴏᴡɴʟᴏᴀᴅ ᴡɪᴛʜɪɴ ғᴇᴡ sᴇᴄᴏɴᴅs ᴀɴᴅ sᴇɴᴅ ɪᴛ ᴛᴏ ʏᴏᴜ ✨."
-    video_file_id = "/app/Jet-Mirror.mp4"
+    reply_markup = InlineKeyboardMarkup([[join_button, developer_button]])
+    final_msg = f"ᴡᴇʟᴄᴏᴍᴇ, {user_mention}.\n\nɪ ᴀᴍ ᴀ ᴛᴇʀᴀʙᴏx ᴅᴏᴡɴʟᴏᴀᴅᴇʀ ʙᴏᴛ. sᴇɴᴅ ᴍᴇ ᴀɴʏ ᴛᴇʀᴀʙᴏx ʟɪɴᴋ ɪ ᴡɪʟʟ ᴅᴏᴡɴʟᴏᴀᴅ ᴡɪᴛʜɪɴ ғᴇᴡ sᴇᴄᴏɴᴅs ᴀɴᴅ sᴇɴᴅ ɪᴛ ᴛᴏ ʏᴏᴜ ✨."
+    video_file_id = "https://ibb.co/m5yY6gDs"
     if os.path.exists(video_file_id):
         await client.send_video(
             chat_id=message.chat.id,
             video=video_file_id,
             caption=final_msg,
             reply_markup=reply_markup
-            )
+        )
     else:
         await message.reply_text(final_msg, reply_markup=reply_markup)
 
-async def update_status_message(status_message, text):
-    try:
-        await status_message.edit_text(text)
-    except Exception as e:
-        logger.error(f"Failed to update status message: {e}")
+@app.on_message(filters.command(["stats", "status"]) & filters.user(ADMIN))
+async def get_stats(bot, message):
+    total_users = await db.total_users_count()
+    total_chats = await db.total_chats_count()
+    uptime = time.strftime("%Hh%Mm%Ss", time.gmtime(time.time() - bot.uptime))    
+    start_t = time.time()
+    sts = await message.reply('**Processing.....**')    
+    end_t = time.time()
+    time_taken_s = (end_t - start_t) * 1000
+    await sts.edit(text=f"**--Bot Status--** \n\n**⌚️ Bot Uptime:** {uptime} \n**🐌 Current Ping:** `{time_taken_s:.3f} ms` \n**👭 Total Users:** `{total_users}`\n**💬 Total Chats:** `{total_chats}`")
+
+@app.on_message(filters.private & filters.command("restart") & filters.user(ADMIN))
+async def restart_bot(b, m):
+    sts = await b.send_message(text="**🔄 Processes stopped. Bot is restarting.....**", chat_id=m.chat.id)
+    failed = 0
+    success = 0
+    deactivated = 0
+    blocked = 0
+    start_time = time.time()
+    total_users = await db.total_users_count()
+    all_users = await db.get_all_users()
+    async for user in all_users:
+        try:
+            restart_msg = f"Hey, {(await b.get_users(user['_id'])).mention}\n\n**🔄 Processes stopped. Bot is restarting.....\n\n✅️ Bot is restarted. Now you can use me.**"
+            await b.send_message(user['_id'], restart_msg)
+            success += 1
+        except InputUserDeactivated:
+            deactivated += 1
+            await db.delete_user(user['_id'])
+        except UserIsBlocked:
+            blocked += 1
+            await db.delete_user(user['_id'])
+        except Exception as e:
+            failed += 1
+            await db.delete_user(user['_id'])
+            logger.error(f"Error sending restart message: {e}")
+        try:
+            await sts.edit(f"<u>Restart in progress:</u>\n\n• Total users: {total_users}\n• Successful: {success}\n• Blocked users: {blocked}\n• Deleted accounts: {deactivated}\n• Unsuccessful: {failed}")
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
+    completed_restart = timedelta(seconds=int(time.time() - start_time))
+    await sts.edit(f"Completed restart: {completed_restart}\n\n• Total users: {total_users}\n• Successful: {success}\n• Blocked users: {blocked}\n• Deleted accounts: {deactivated}\n• Unsuccessful: {failed}")
+    os.execl(sys.executable, sys.executable, *sys.argv)
+    
+@app.on_message(filters.command("broadcast") & filters.user(ADMIN) & filters.reply)
+async def broadcast_handler(bot: Client, m: Message):
+    await bot.send_message(LOG_CHANNEL, f"{m.from_user.mention} or {m.from_user.id} Is started the Broadcast......")
+    all_users = await db.get_all_users()
+    broadcast_msg = m.reply_to_message
+    sts_msg = await m.reply_text("Broadcast Started..!") 
+    done = 0
+    failed = 0
+    success = 0
+    start_time = time.time()
+    total_users = await db.total_users_count()
+    async for user in all_users:
+        sts = await send_msg(user['_id'], broadcast_msg)
+        if sts == 200:
+           success += 1
+        else:
+           failed += 1
+        if sts == 400:
+           await db.delete_user(user['_id'])
+        done += 1
+        if not done % 20:
+           await sts_msg.edit(f"Broadcast In Progress: \nTotal Users {total_users} \nCompleted: {done} / {total_users}\nSuccess: {success}\nFailed: {failed}")
+    completed_in = timedelta(seconds=int(time.time() - start_time))
+    await sts_msg.edit(f"Broadcast Completed: \nCompleted In `{completed_in}`.\n\nTotal Users {total_users}\nCompleted: {done} / {total_users}\nSuccess: {success}\nFailed: {failed}")
 
 @app.on_message(filters.text)
 async def handle_message(client: Client, message: Message):
@@ -156,7 +341,7 @@ async def handle_message(client: Client, message: Message):
     is_member = await is_user_member(client, user_id)
 
     if not is_member:
-        join_button = InlineKeyboardButton("ᴊᴏɪɴ ❤️🚀", url="https://t.me/jetmirror")
+        join_button = InlineKeyboardButton("ᴊᴏɪɴ ❤️🚀", url="https://t.me/tellymirror")
         reply_markup = InlineKeyboardMarkup([[join_button]])
         await message.reply_text("ʏᴏᴜ ᴍᴜsᴛ ᴊᴏɪɴ ᴍʏ ᴄʜᴀɴɴᴇʟ ᴛᴏ ᴜsᴇ ᴍᴇ.", reply_markup=reply_markup)
         return
@@ -172,7 +357,7 @@ async def handle_message(client: Client, message: Message):
         return
 
     encoded_url = urllib.parse.quote(url)
-    final_url = f"https://teradlrobot.cheemsbackup.workers.dev/?url={encoded_url}"
+    final_url = f"https://teraboxbotredirect.tellycloudapi.workers.dev/?url={encoded_url}"
 
     download = aria2.add_uris([final_url])
     status_message = await message.reply_text("sᴇɴᴅɪɴɢ ʏᴏᴜ ᴛʜᴇ ᴍᴇᴅɪᴀ...🤤")
@@ -188,15 +373,13 @@ async def handle_message(client: Client, message: Message):
         elapsed_minutes, elapsed_seconds = divmod(elapsed_time.seconds, 60)
 
         status_text = (
-            f"┏ ғɪʟᴇɴᴀᴍᴇ: {download.name}\n"
-            f"┠ [{'★' * int(progress / 10)}{'☆' * (10 - int(progress / 10))}] {progress:.2f}%\n"
-            f"┠ ᴘʀᴏᴄᴇssᴇᴅ: {format_size(download.completed_length)} ᴏғ {format_size(download.total_length)}\n"
-            f"┠ sᴛᴀᴛᴜs: 📥 Downloading\n"
-            f"┠ ᴇɴɢɪɴᴇ: <b><u>Aria2c v1.37.0</u></b>\n"
-            f"┠ sᴘᴇᴇᴅ: {format_size(download.download_speed)}/s\n"
-            f"┠ ᴇᴛᴀ: {download.eta} | ᴇʟᴀᴘsᴇᴅ: {elapsed_minutes}m {elapsed_seconds}s\n"
-            f"┖ ᴜsᴇʀ: <a href='tg://user?id={user_id}'>{message.from_user.first_name}</a> | ɪᴅ: {user_id}\n"
-            )
+            f"ғɪʟᴇɴᴀᴍᴇ: {download.name}\n"
+            f"[{'▣' * int(progress / 10)}{'▢' * (10 - int(progress / 10))}] {progress:.2f}%\n"
+            f"ᴘʀᴏᴄᴇssᴇᴅ: {format_size(download.completed_length)} ᴏғ {format_size(download.total_length)}\n"
+            f"sᴛᴀᴛᴜs: 📥 Downloading\n"
+            f"sᴘᴇᴇᴅ: {format_size(download.download_speed)}/s\n"
+            f"ᴇᴛᴀ: {download.eta} | ᴇʟᴀᴘsᴇᴅ: {elapsed_minutes}m {elapsed_seconds}s\n"
+        )
         while True:
             try:
                 await update_status_message(status_message, status_text)
@@ -206,12 +389,7 @@ async def handle_message(client: Client, message: Message):
                 await asyncio.sleep(e.value)
 
     file_path = download.files[0].path
-    caption = (
-        f"✨ {download.name}\n"
-        f"👤 ʟᴇᴇᴄʜᴇᴅ ʙʏ : <a href='tg://user?id={user_id}'>{message.from_user.first_name}</a>\n"
-        f"📥 ᴜsᴇʀ ʟɪɴᴋ: tg://user?id={user_id}\n\n"
-        "[ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴊᴇᴛ-ᴍɪʀʀᴏʀ ❤️🚀](https://t.me/JetMirror)"
-    )
+    caption = f"✨ {download.name}"
 
     last_update_time = time.time()
     UPDATE_INTERVAL = 15
@@ -236,14 +414,12 @@ async def handle_message(client: Client, message: Message):
         elapsed_minutes, elapsed_seconds = divmod(elapsed_time.seconds, 60)
 
         status_text = (
-            f"┏ ғɪʟᴇɴᴀᴍᴇ: {download.name}\n"
-            f"┠ [{'★' * int(progress / 10)}{'☆' * (10 - int(progress / 10))}] {progress:.2f}%\n"
-            f"┠ ᴘʀᴏᴄᴇssᴇᴅ: {format_size(current)} ᴏғ {format_size(total)}\n"
-            f"┠ sᴛᴀᴛᴜs: 📤 Uploading to Telegram\n"
-            f"┠ ᴇɴɢɪɴᴇ: <b><u>PyroFork v2.2.11</u></b>\n"
-            f"┠ sᴘᴇᴇᴅ: {format_size(current / elapsed_time.seconds if elapsed_time.seconds > 0 else 0)}/s\n"
-            f"┠ ᴇʟᴀᴘsᴇᴅ: {elapsed_minutes}m {elapsed_seconds}s\n"
-            f"┖ ᴜsᴇʀ: <a href='tg://user?id={user_id}'>{message.from_user.first_name}</a> | ɪᴅ: {user_id}\n"
+            f"ғɪʟᴇɴᴀᴍᴇ: {download.name}\n"
+            f"[{'▣' * int(progress / 10)}{'▢' * (10 - int(progress / 10))}] {progress:.2f}%\n"
+            f"ᴘʀᴏᴄᴇssᴇᴅ: {format_size(current)} ᴏғ {format_size(total)}\n"
+            f"sᴛᴀᴛᴜs: 📤 Uploading to Telegram\n"
+            f"sᴘᴇᴇᴅ: {format_size(current / elapsed_time.seconds if elapsed_time.seconds > 0 else 0)}/s\n"
+            f"ᴇʟᴀᴘsᴇᴅ: {elapsed_minutes}m {elapsed_seconds}s\n"
         )
         await update_status(status_message, status_text)
 
@@ -285,7 +461,7 @@ async def handle_message(client: Client, message: Message):
                 
                 output_path = f"{output_prefix}.{i+1:03d}{original_ext}"
                 cmd = [
-                    'xtra', '-y', '-ss', str(i * duration_per_part),
+                    'ffmpeg', '-y', '-ss', str(i * duration_per_part),
                     '-i', input_path, '-t', str(duration_per_part),
                     '-c', 'copy', '-map', '0',
                     '-avoid_negative_ts', 'make_zero',
@@ -387,6 +563,7 @@ async def handle_message(client: Client, message: Message):
     except Exception as e:
         logger.error(f"Cleanup error: {e}")
 
+# Flask server for keeping the bot alive
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
