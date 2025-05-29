@@ -276,16 +276,6 @@ async def start_command(client: Client, message: Message):
     else:
         await message.reply_text(final_msg, reply_markup=reply_markup)
 
-@app.on_message(filters.command(["stats", "status"]) & filters.user(ADMIN))
-async def get_stats(bot, message):
-    total_users = await db.total_users_count()
-    total_chats = await db.total_chats_count()
-    uptime = time.strftime("%Hh%Mm%Ss", time.gmtime(time.time() - bot.uptime))    
-    start_t = time.time()
-    sts = await message.reply('**Processing.....**')    
-    end_t = time.time()
-    time_taken_s = (end_t - start_t) * 1000
-    await sts.edit(text=f"**--Bot Status--** \n\n**⌚️ Bot Uptime:** {uptime} \n**🐌 Current Ping:** `{time_taken_s:.3f} ms` \n**👭 Total Users:** `{total_users}`\n**💬 Total Chats:** `{total_chats}`")
 
 @app.on_message(filters.private & filters.command("restart") & filters.user(ADMIN))
 async def restart_bot(b, m):
@@ -319,31 +309,86 @@ async def restart_bot(b, m):
     completed_restart = timedelta(seconds=int(time.time() - start_time))
     await sts.edit(f"Completed restart: {completed_restart}\n\n• Total users: {total_users}\n• Successful: {success}\n• Blocked users: {blocked}\n• Deleted accounts: {deactivated}\n• Unsuccessful: {failed}")
     os.execl(sys.executable, sys.executable, *sys.argv)
-    
+
+
+# Update the command filters to use the correct syntax
+@app.on_message(filters.command(["stats", "status"]) & filters.user(ADMIN))
+async def get_stats(bot: Client, message: Message):
+    try:
+        total_users = await db.total_users_count()
+        total_chats = await db.total_chats_count()
+        uptime = time.strftime("%Hh%Mm%Ss", time.gmtime(time.time() - bot.uptime))    
+        start_t = time.time()
+        sts = await message.reply('**Processing.....**')    
+        end_t = time.time()
+        time_taken_s = (end_t - start_t) * 1000
+        await sts.edit(
+            text=f"**--Bot Status--**\n\n"
+                 f"**⌚️ Bot Uptime:** {uptime}\n"
+                 f"**🐌 Current Ping:** `{time_taken_s:.3f} ms`\n"
+                 f"**👭 Total Users:** `{total_users}`\n"
+                 f"**💬 Total Chats:** `{total_chats}`"
+        )
+    except Exception as e:
+        logger.error(f"Error in stats command: {e}")
+        await message.reply("❌ Error getting stats. Check logs.")
+
 @app.on_message(filters.command("broadcast") & filters.user(ADMIN) & filters.reply)
-async def broadcast_handler(bot: Client, m: Message):
-    await bot.send_message(LOG_CHANNEL, f"{m.from_user.mention} or {m.from_user.id} Is started the Broadcast......")
-    all_users = await db.get_all_users()
-    broadcast_msg = m.reply_to_message
-    sts_msg = await m.reply_text("Broadcast Started..!") 
-    done = 0
-    failed = 0
-    success = 0
-    start_time = time.time()
-    total_users = await db.total_users_count()
-    async for user in all_users:
-        sts = await send_msg(user['_id'], broadcast_msg)
-        if sts == 200:
-           success += 1
-        else:
-           failed += 1
-        if sts == 400:
-           await db.delete_user(user['_id'])
-        done += 1
-        if not done % 20:
-           await sts_msg.edit(f"Broadcast In Progress: \nTotal Users {total_users} \nCompleted: {done} / {total_users}\nSuccess: {success}\nFailed: {failed}")
-    completed_in = timedelta(seconds=int(time.time() - start_time))
-    await sts_msg.edit(f"Broadcast Completed: \nCompleted In `{completed_in}`.\n\nTotal Users {total_users}\nCompleted: {done} / {total_users}\nSuccess: {success}\nFailed: {failed}")
+async def broadcast_handler(bot: Client, message: Message):
+    try:
+        await bot.send_message(
+            LOG_CHANNEL,
+            f"{message.from_user.mention} ({message.from_user.id}) started a broadcast"
+        )
+        
+        broadcast_msg = message.reply_to_message
+        if not broadcast_msg:
+            await message.reply("Please reply to a message to broadcast")
+            return
+            
+        sts_msg = await message.reply("Broadcast Started..!") 
+        done = 0
+        failed = 0
+        success = 0
+        start_time = time.time()
+        
+        total_users = await db.total_users_count()
+        all_users = db.get_all_users()
+        
+        async for user in all_users:
+            try:
+                sts = await send_msg(user['_id'], broadcast_msg)
+                if sts == 200:
+                    success += 1
+                else:
+                    failed += 1
+                done += 1
+                
+                if done % 20 == 0:
+                    await sts_msg.edit(
+                        f"Broadcast Progress:\n"
+                        f"Total Users: {total_users}\n"
+                        f"Completed: {done}/{total_users}\n"
+                        f"Success: {success}\n"
+                        f"Failed: {failed}"
+                    )
+            except Exception as e:
+                logger.error(f"Error broadcasting to {user['_id']}: {e}")
+                failed += 1
+                continue
+                
+        completed_in = timedelta(seconds=int(time.time() - start_time))
+        await sts_msg.edit(
+            f"Broadcast Completed in {completed_in}\n\n"
+            f"Total Users: {total_users}\n"
+            f"Success: {success}\n"
+            f"Failed: {failed}"
+        )
+    except Exception as e:
+        logger.error(f"Broadcast error: {e}")
+        await message.reply(f"❌ Broadcast failed: {e}")
+
+
 
 @app.on_message(filters.text)
 async def handle_message(client: Client, message: Message):
